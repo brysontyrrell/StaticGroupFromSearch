@@ -2,6 +2,7 @@
 import argparse
 import base64
 import csv
+import getpass
 import sys
 import urllib2
 try:
@@ -9,104 +10,120 @@ try:
 except ImportError:
     import xml.etree.ElementTree as etree
 
-class ArgParser:
+
+class ArgParser(object):
     def __init__(self):
-        parser = argparse.ArgumentParser(prog = "StaticGroupFromSearch", description = "Use the '/match' endpoint for Computers and Mobile devices to generate Static Groups.",
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-            epilog = """Example usage:
-$ ./StaticGroupFromSearch.py https://jss.myorg.com 'user' 'pass' "Starts with 'admin'" --computers --phrase 'admin*'
-$ ./StaticGroupFromSearch.py https://jss.myorg.com 'user' 'pass' "Contains 'iP'" --mobildevices --phrase '*iP*'
-$ ./StaticGroupFromSearch.py https://jss.myorg.com 'user' 'pass' "Devices from list" --mobildevices --csv-file /path/to/list.csv
+        parser = argparse.ArgumentParser(
+            prog = "StaticGroupFromSearch",
+            description = "Use the '/match' endpoint for Computers and Mobile devices to generate Static Groups.",
+            formatter_class=argparse.RawDescriptionHelpFormatter, epilog = """Example usage:
+$ ./StaticGroupFromSearch.py https://jss.myorg.com "Contains 'iPhone'" -u 'user' -p 'pass' --mobildevices -s '*iPhone*'
+$ ./StaticGroupFromSearch.py https://jss.myorg.com "Starts with 'admin'" --computers --search 'admin*'
+$ ./StaticGroupFromSearch.py https://jss.myorg.com "Devices from list" --mobildevices --csv-file /path/to/list.csv
             """)
+
+        parser.add_argument('jssurl', type=str, default=None, help="JSS URL")
+        parser.add_argument('groupname', type=str, default=None, help="new static group name")
+
         groupSearchType = parser.add_mutually_exclusive_group(required=True)
-        groupSearchType.add_argument('-c', '--computers', action = "store_true", help = "search computers")
-        groupSearchType.add_argument('-m', '--mobiledevices', action = "store_true", help = "search mobile devices")
+        groupSearchType.add_argument('-c', '--computers', action="store_true", help="search computers")
+        groupSearchType.add_argument('-m', '--mobiledevices', action="store_true", help="search mobile devices")
+
         groupSearchInput = parser.add_mutually_exclusive_group(required=True)
-        groupSearchInput.add_argument('-f', '--csv-file', type = str, dest = 'file', default = None, help = "read values from csv file")
-        groupSearchInput.add_argument('-p', '--phrase', type = str, default = None, help = "search for a value")
-        #parser.add_argument('--insecure', action="store_true", help = "Allow insecure connections")
-        parser.add_argument('jssurl', type = str, default = None, help = "JSS URL")
-        parser.add_argument('username', type = str, default = None, help = "API username")
-        parser.add_argument('password', type = str, default = None, help = "API user password")
-        parser.add_argument('groupname', type = str, default = None, help = "new static group name")
+        groupSearchInput.add_argument('-f', '--csv-file', type=str, dest='file', default=None,
+                                      help="read search values from csv file")
+        groupSearchInput.add_argument('-s', '--search', type=str, default=None, help="search for a value")
+
+        parser.add_argument('-u', '--username', dest='username', type=str, default=None, help="API username")
+        parser.add_argument('-p', '--password', dest='password', type=str, default=None, help="API user password")
         
-        if len(sys.argv)==1:
+        if len(sys.argv) == 1:
             parser.print_help()
             sys.exit(1)
             
         args = parser.parse_args()
-        self.type = None
-        
-        if args.computers:
-            self.type = "computers"
-        elif args.mobiledevices:
-            self.type = "mobiledevices"
-            
-        if args.phrase:
-            self.searchvalue = [urllib2.quote(args.phrase)]
-        elif args.file:
+
+        self.searchtype = "computers" if args.computers else "mobiledevices"
+        if args.search:
+            self.searchvalue = [urllib2.quote(args.search)]
+        else:
             self.searchvalue = []
             with open(args.file, 'rU') as f:
                 reader = csv.reader(f)
                 for row in reader:
                     self.searchvalue.append(urllib2.quote(row[0]))
                     
-        self.jssurl = args.jssurl.rstrip('/')
-        self.username = args.username
-        self.password = args.password
+        self.jssurl = self.clean_url(args.jssurl)
         self.groupname = args.groupname
 
+        self.username = args.username if args.username else str(raw_input("API Username: "))
+        self.password = args.password if args.password else getpass.getpass("API Password: ")
 
-class JSS:
-    def __init__(self, url, username, password, type):
+    @staticmethod
+    def clean_url(url):
+        cleaned_url = url.rstrip('/')
+        if not (cleaned_url.startswith('http://') or cleaned_url.startswith('https://')) :
+            print("valid prefix for server url not found: prefixing with https://")
+            cleaned_url = 'https://' + cleaned_url
+
+        return cleaned_url
+
+
+class JSS(object):
+    def __init__(self, url, username, password, matchtype):
         self.auth = base64.b64encode(username + ':' + password)
-        self.match_endpoint = '{0}/JSSResource/{1}/match/'.format(url, type)
-        if type == 'computers':
-            self.group_endpoint = '{0}/JSSResource/computergroups/id/0'.format(url)
+        self.server = url
+        self.match_endpoint = '/JSSResource/{0}/match/'.format(matchtype)
+        if matchtype == 'computers':
+            self.group_endpoint = '/JSSResource/computergroups/id/0'
         else:
-            self.group_endpoint = '{0}/JSSResource/mobiledevicegroups/id/0'.format(url)
+            self.group_endpoint = '/JSSResource/mobiledevicegroups/id/0'
         
     def get_match(self, searchvalue):
-        request = urllib2.Request(self.match_endpoint + searchvalue)
-        request.add_header('Authorization', 'Basic ' + self.auth)
-        request.add_header('Content-Type', 'text/xml')
-        print("performing search on the JSS at: {0}{1}".format(self.match_endpoint, searchvalue))
-        try:
-            response = urllib2.urlopen(request)
-        
-        except Exception as e:
-            print("an error occurred during the GET: {0}".format(e.code))
-            print(e.read())
-            sys.exit(e.code)
-        
-        return etree.fromstring(response.read())
+        print("performing search on the JSS at: ..{0}{1}".format(self.match_endpoint, searchvalue))
+        request = urllib2.Request(self.server + self.match_endpoint + searchvalue)
+        return etree.fromstring(self.request(request))
     
-    def create_group(self, data):
-        request = urllib2.Request(self.group_endpoint, data)
+    def create_group(self, postdata):
+        print("creating new Static Group on the JSS at: ..{0}".format(self.group_endpoint))
+        request = urllib2.Request(self.server + self.group_endpoint, postdata)
+        request.get_method = lambda: 'POST'
+        return etree.fromstring(self.request(request)).find('id').text
+
+    def request(self, request):
         request.add_header('Authorization', 'Basic ' + self.auth)
         request.add_header('Content-Type', 'text/xml')
-        request.get_method = lambda: 'POST'
-        print("creating new Static Group on the JSS at: {0}".format(self.group_endpoint))
         try:
             response = urllib2.urlopen(request)
-        
+        except ValueError as e:
+            print("an error occurred during the search: {0}".format(e.message))
+            print("check the URL used and try again\n")
+            sys.exit(1)
+        except urllib2.HTTPError as e:
+            added_message = "there may be an existing group using the provided name\n" if e.code == 409 else ''
+            print("an error occurred during the search: {0} {1}: {2}\n{3}".format(type(e).__name__, e.code, e.reason,
+                                                                                  added_message))
+            sys.exit(1)
+        except urllib2.URLError as e:
+            print("an error occurred during the search: {0}: {1}".format(type(e).__name__, e.reason))
+            print("check the server URL used and try again\n")
+            sys.exit(1)
         except Exception as e:
-            print("an error occurred during the POST: {0}".format(e.code))
-            print(e.read())
-            sys.exit(e.code)
-        
-        groupid = etree.fromstring(response.read()).find('id').text
-        return groupid
+            print("an unknown error has occurred: {0}: {1}\n".format(type(e).__name__, e.message))
+            sys.exit(1)
+
+        return response.read()
 
 
-def CreateGroupPostData(input, collection, list, item, groupname):
-    '''this function reads computer IDs from the 'input' and returns XML for a POST'''
+
+def CreateGroupPostData(input, collection, grouping, item, groupname):
+    """this function reads computer IDs from the 'input' and returns XML for a POST"""
     root = etree.Element(collection)
     name = etree.SubElement(root, 'name')
     name.text = groupname
     is_smart = etree.SubElement(root, 'is_smart')
     is_smart.text = 'false'
-    itemlist = etree.SubElement(root, list)
+    itemlist = etree.SubElement(root, grouping)
     
     for i in input:
         add_element = etree.SubElement(itemlist, item)
@@ -118,36 +135,34 @@ def CreateGroupPostData(input, collection, list, item, groupname):
 
 if __name__ == '__main__':
     args = ArgParser()
-    jss = JSS(args.jssurl, args.username, args.password, args.type)
+    jss = JSS(args.jssurl, args.username, args.password, args.searchtype)
     
-    if args.type == 'computers':
+    if args.searchtype == 'computers':
         collection = 'computer_group'
-        list = 'computers'
+        grouping = 'computers'
         item = 'computer'
     else:
         collection = 'mobile_device_group'
-        list = 'mobile_devices'
+        grouping = 'mobile_devices'
         item = 'mobile_device'
     
-    print collection, list, item
-    
     match_results = []
-    for i in args.searchvalue:
-        results = jss.get_match(i)
-        for r in results.findall(item):
-            id = r.find('id').text
-            if id not in match_results:
-                match_results.append(id)
+    for value in args.searchvalue:
+        results = jss.get_match(value)
+        for result in results.findall(item):
+            item_id = result.find('id').text
+            if item_id not in match_results:
+                match_results.append(item_id)
         
     size = len(match_results)
     if not size:
-        print("the JSS matched no results to the provided search value")
+        print("the JSS matched no results to the provided search value\n")
         sys.exit(2)
     else:
         print("the JSS matched {0} result(s) to the provided search value".format(size))
         
-    data = CreateGroupPostData(match_results, collection, list, item, args.groupname)
-    
+    data = CreateGroupPostData(match_results, collection, grouping, item, args.groupname)
     new_group_id = jss.create_group(data)
-    print("the new Static Group has been created at ID: {0}".format(new_group_id))
+
+    print("the new Static Group has been created with ID: {0}\n".format(new_group_id))
     sys.exit(0)

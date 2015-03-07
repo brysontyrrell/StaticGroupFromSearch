@@ -10,7 +10,7 @@ The script takes arguments and contains built-in help text.
 ---
 A single phrase can be passed as the search criteria or a list provided in CSV format.  Any searchable criteria for an inventory record can be used along with wild card values (*).
 
-CSV lists can contain a mix of values such as usernames, email addresses, serial numbers, MAC addresses, etc.  Your CSV file should be formated as a single column without a header:
+CSV lists can contain a mix of values such as usernames, email addresses, serial numbers, MAC addresses, etc.  Your CSV file should be formatted as a single column without a header:
 
 | value1 |
 |--------|
@@ -25,15 +25,14 @@ Passing an asterisk (*) as the criteria will return all device records.
 Script help text show here:
 
 ```
-usage: StaticGroupFromSearch [-h] (-c | -m) (-f FILE | -p PHRASE)
-                             jssurl username password groupname
+usage: StaticGroupFromSearch [-h] (-c | -m) (-f FILE | -s SEARCH)
+                             [-u USERNAME] [-p PASSWORD]
+                             jssurl groupname
 
 Use the '/match' endpoint for Computers and Mobile devices to generate Static Groups.
 
 positional arguments:
   jssurl                JSS URL
-  username              API username
-  password              API user password
   groupname             new static group name
 
 optional arguments:
@@ -41,12 +40,16 @@ optional arguments:
   -c, --computers       search computers
   -m, --mobiledevices   search mobile devices
   -f FILE, --csv-file FILE
-                        read values from csv file
-  -p PHRASE, --phrase PHRASE
+                        read search values from csv file
+  -s SEARCH, --search SEARCH
                         search for a value
+  -u USERNAME, --username USERNAME
+                        API username
+  -p PASSWORD, --password PASSWORD
+                        API user password
 
 Example usage:
-$ ./StaticGroupFromSearch.py https://jss.myorg.com 'user' 'pass' "Starts with 'admin'" --computers --phrase 'admin*'
-$ ./StaticGroupFromSearch.py https://jss.myorg.com 'user' 'pass' "Contains 'iP'" --mobildevices --phrase '*iP*'
-$ ./StaticGroupFromSearch.py https://jss.myorg.com 'user' 'pass' "Devices from list" --mobildevices --csv-file /path/to/list.csv
+$ ./StaticGroupFromSearch.py https://jss.myorg.com "Contains 'iPhone'" -u 'user' -p 'pass' --mobildevices -s '*iPhone*'
+$ ./StaticGroupFromSearch.py https://jss.myorg.com "Starts with 'admin'" --computers --search 'admin*'
+$ ./StaticGroupFromSearch.py https://jss.myorg.com "Devices from list" --mobildevices --csv-file /path/to/list.csv.csv
 ```
