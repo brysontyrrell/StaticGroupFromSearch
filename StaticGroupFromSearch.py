@@ -167,10 +167,8 @@ def CreateGroupPostData(input, collection, grouping, item, groupname):
 def main():
     args = ArgParser()
 
-    if sys.platform == 'darwin':
-        print("forcing TLSv1")
-        urllib2.install_opener(urllib2.build_opener(TLS1Handler()))
-        
+    urllib2.install_opener(urllib2.build_opener(TLS1Handler()))
+
     jss = JSS(args.jssurl, args.username, args.password, args.searchtype)
     
     if args.searchtype == 'computers':
