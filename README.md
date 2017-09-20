@@ -49,7 +49,7 @@ optional arguments:
                         API user password
 
 Example usage:
-$ ./StaticGroupFromSearch.py https://jss.myorg.com "Contains 'iPhone'" -u 'user' -p 'pass' --mobildevices -s '*iPhone*'
+$ ./StaticGroupFromSearch.py https://jss.myorg.com "Contains 'iPhone'" -u 'user' -p 'pass' --mobiledevices -s '*iPhone*'
 $ ./StaticGroupFromSearch.py https://jss.myorg.com "Starts with 'admin'" --computers --search 'admin*'
-$ ./StaticGroupFromSearch.py https://jss.myorg.com "Devices from list" --mobildevices --csv-file /path/to/list.csv.csv
+$ ./StaticGroupFromSearch.py https://jss.myorg.com "Devices from list" --mobiledevices --csv-file /path/to/list.csv.csv
 ```
