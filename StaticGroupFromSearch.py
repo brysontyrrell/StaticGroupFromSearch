@@ -48,9 +48,9 @@ class ArgParser(object):
             prog = "StaticGroupFromSearch",
             description = "Use the '/match' endpoint for Computers and Mobile devices to generate Static Groups.",
             formatter_class=argparse.RawDescriptionHelpFormatter, epilog = """Example usage:
-$ ./StaticGroupFromSearch.py https://jss.myorg.com "Contains 'iPhone'" -u 'user' -p 'pass' --mobildevices -s '*iPhone*'
+$ ./StaticGroupFromSearch.py https://jss.myorg.com "Contains 'iPhone'" -u 'user' -p 'pass' --mobiledevices -s '*iPhone*'
 $ ./StaticGroupFromSearch.py https://jss.myorg.com "Starts with 'admin'" --computers --search 'admin*'
-$ ./StaticGroupFromSearch.py https://jss.myorg.com "Devices from list" --mobildevices --csv-file /path/to/list.csv
+$ ./StaticGroupFromSearch.py https://jss.myorg.com "Devices from list" --mobiledevices --csv-file /path/to/list.csv
             """)
 
         parser.add_argument('jssurl', type=str, default=None, help="JSS URL")
