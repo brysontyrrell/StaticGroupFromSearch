@@ -1,57 +1,33 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 import argparse
-import base64
 import csv
 import getpass
-import httplib
-import socket
-import ssl
+import logging
+import os
+import posixpath
 import sys
-import urllib2
 try:
-    import xml.etree.cElementTree as etree
+    import xml.etree.cElementTree as Et
 except ImportError:
-    import xml.etree.ElementTree as etree
+    import xml.etree.ElementTree as Et
+import urlparse
+
+import requests
 
 
-class TLS1Connection(httplib.HTTPSConnection):
-    """Like HTTPSConnection but more specific"""
-    def __init__(self, host, **kwargs):
-        httplib.HTTPSConnection.__init__(self, host, **kwargs)
-
-    def connect(self):
-        """Overrides HTTPSConnection.connect to specify TLS version"""
-        # Standard implementation from HTTPSConnection, which is not
-        # designed for extension, unfortunately
-        sock = socket.create_connection((self.host, self.port),
-                self.timeout, self.source_address)
-        if getattr(self, '_tunnel_host', None):
-            self.sock = sock
-            self._tunnel()
-
-        # This is the only difference; default wrap_socket uses SSLv23
-        self.sock = ssl.wrap_socket(sock, self.key_file, self.cert_file, ssl_version=ssl.PROTOCOL_TLSv1)
-
-
-class TLS1Handler(urllib2.HTTPSHandler):
-    """Like HTTPSHandler but more specific"""
-    def __init__(self):
-        urllib2.HTTPSHandler.__init__(self)
-
-    def https_open(self, req):
-        return self.do_open(TLS1Connection, req)
-
-
-class ArgParser(object):
-    def __init__(self):
-        parser = argparse.ArgumentParser(
-            prog = "StaticGroupFromSearch",
-            description = "Use the '/match' endpoint for Computers and Mobile devices to generate Static Groups.",
-            formatter_class=argparse.RawDescriptionHelpFormatter, epilog = """Example usage:
+__help__ = """Example usage:
 $ ./StaticGroupFromSearch.py https://jss.myorg.com "Contains 'iPhone'" -u 'user' -p 'pass' --mobiledevices -s '*iPhone*'
 $ ./StaticGroupFromSearch.py https://jss.myorg.com "Starts with 'admin'" --computers --search 'admin*'
 $ ./StaticGroupFromSearch.py https://jss.myorg.com "Devices from list" --mobiledevices --csv-file /path/to/list.csv
-            """)
+"""
+
+
+class Arguments(object):
+    def __init__(self):
+        parser = argparse.ArgumentParser(
+            prog="StaticGroupFromSearch",
+            description="Use the '/match' endpoint for Computers and Mobile devices to generate Static Groups.",
+            formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__help__)
 
         parser.add_argument('jssurl', type=str, default=None, help="JSS URL")
         parser.add_argument('groupname', type=str, default=None, help="new static group name")
@@ -75,14 +51,15 @@ $ ./StaticGroupFromSearch.py https://jss.myorg.com "Devices from list" --mobiled
         args = parser.parse_args()
 
         self.searchtype = "computers" if args.computers else "mobiledevices"
+
         if args.search:
-            self.searchvalue = [urllib2.quote(args.search)]
+            self.searchvalue = [args.search]
         else:
             self.searchvalue = []
             with open(args.file, 'rU') as f:
                 reader = csv.reader(f)
                 for row in reader:
-                    self.searchvalue.append(urllib2.quote(row[0]))
+                    self.searchvalue.append(row[0])
                     
         self.jssurl = self.clean_url(args.jssurl)
         self.groupname = args.groupname
@@ -92,6 +69,7 @@ $ ./StaticGroupFromSearch.py https://jss.myorg.com "Devices from list" --mobiled
 
     @staticmethod
     def clean_url(url):
+        # Replace with 'urlparse'
         cleaned_url = url.rstrip('/')
         if not (cleaned_url.startswith('http://') or cleaned_url.startswith('https://')) :
             print("valid prefix for server url not found: prefixing with https://")
@@ -100,76 +78,79 @@ $ ./StaticGroupFromSearch.py https://jss.myorg.com "Devices from list" --mobiled
         return cleaned_url
 
 
-class JSS(object):
+class JamfProClient(object):
+    """Class for interacting with the Jamf Pro API."""
     def __init__(self, url, username, password, matchtype):
-        self.auth = base64.b64encode(username + ':' + password)
-        self.server = url
-        self.match_endpoint = '/JSSResource/{0}/match/'.format(matchtype)
+        self._session = requests.Session()
+        self._session.auth = (username, password)
+
+        self.url = posixpath.join(url, 'JSSResource')
+
+        if matchtype not in ('computers', 'mobiledevices'):
+            raise Exception
+
+        self.match_endpoint = '{0}/match'.format(matchtype)
+
         if matchtype == 'computers':
-            self.group_endpoint = '/JSSResource/computergroups/id/0'
+            self.group_endpoint = 'computergroups/id/0'
         else:
-            self.group_endpoint = '/JSSResource/mobiledevicegroups/id/0'
+            self.group_endpoint = 'mobiledevicegroups/id/0'
+
+    @staticmethod
+    def _raise_exception(response):
+        try:
+            response.raise_for_status()
+        except requests.RequestException as error:
+            if response.status_code == 409:
+                print("A conflict with an existing group was encountered")
+            else:
+                print("an error occurred during the search: {0}".format(
+                    error.message))
+                print("check the URL used and try again\n")
+
+            sys.exit(1)
         
     def get_match(self, searchvalue):
-        print("performing search on the JSS at: ..{0}{1}".format(self.match_endpoint, searchvalue))
-        request = urllib2.Request(self.server + self.match_endpoint + searchvalue)
-        return etree.fromstring(self.request(request))
+        print("performing search on the JSS at: ..{0}/{1}".format(self.match_endpoint, searchvalue))
+        resp = self._session.get(
+            posixpath.join(self.url, self.match_endpoint, searchvalue),
+            headers={'Accept': 'text/xml'}
+        )
+        self._raise_exception(resp)
+        return Et.fromstring(resp.text.encode('utf-8'))
     
     def create_group(self, postdata):
         print("creating new Static Group on the JSS at: ..{0}".format(self.group_endpoint))
-        request = urllib2.Request(self.server + self.group_endpoint, postdata)
-        request.get_method = lambda: 'POST'
-        return etree.fromstring(self.request(request)).find('id').text
-
-    def request(self, request):
-        request.add_header('Authorization', 'Basic ' + self.auth)
-        request.add_header('Content-Type', 'text/xml')
-        try:
-            response = urllib2.urlopen(request)
-        except ValueError as e:
-            print("an error occurred during the search: {0}".format(e.message))
-            print("check the URL used and try again\n")
-            sys.exit(1)
-        except urllib2.HTTPError as e:
-            added_message = "there may be an existing group using the provided name\n" if e.code == 409 else ''
-            print("an error occurred during the search: {0} {1}: {2}\n{3}".format(type(e).__name__, e.code, e.reason,
-                                                                                  added_message))
-            sys.exit(1)
-        except urllib2.URLError as e:
-            print("an error occurred during the search: {0}: {1}".format(type(e).__name__, e.reason))
-            print("check the server URL used and try again\n")
-            sys.exit(1)
-        except Exception as e:
-            print("an unknown error has occurred: {0}: {1}\n".format(type(e).__name__, e.message))
-            sys.exit(1)
-
-        return response.read()
-
+        resp = self._session.post(
+            posixpath.join(self.url, self.group_endpoint),
+            headers={'Content-Type': 'text/xml'},
+            data=postdata
+        )
+        return Et.fromstring(resp.text).findtext('id')
 
 
 def CreateGroupPostData(input, collection, grouping, item, groupname):
     """this function reads computer IDs from the 'input' and returns XML for a POST"""
-    root = etree.Element(collection)
-    name = etree.SubElement(root, 'name')
+    root = Et.Element(collection)
+    name = Et.SubElement(root, 'name')
     name.text = groupname
-    is_smart = etree.SubElement(root, 'is_smart')
+    is_smart = Et.SubElement(root, 'is_smart')
     is_smart.text = 'false'
-    itemlist = etree.SubElement(root, grouping)
+    itemlist = Et.SubElement(root, grouping)
     
     for i in input:
-        add_element = etree.SubElement(itemlist, item)
-        add_element_id = etree.SubElement(add_element, 'id')
+        add_element = Et.SubElement(itemlist, item)
+        add_element_id = Et.SubElement(add_element, 'id')
         add_element_id.text = i
         
-    return etree.tostring(root)
+    return Et.tostring(root)
 
 
 def main():
-    args = ArgParser()
+    args = Arguments()
+    print(args.searchvalue, args.groupname, args.searchtype)
 
-    urllib2.install_opener(urllib2.build_opener(TLS1Handler()))
-
-    jss = JSS(args.jssurl, args.username, args.password, args.searchtype)
+    jamf = JamfProClient(args.jssurl, args.username, args.password, args.searchtype)
     
     if args.searchtype == 'computers':
         collection = 'computer_group'
@@ -182,7 +163,7 @@ def main():
     
     match_results = []
     for value in args.searchvalue:
-        results = jss.get_match(value)
+        results = jamf.get_match(value)
         for result in results.findall(item):
             item_id = result.find('id').text
             if item_id not in match_results:
@@ -196,7 +177,7 @@ def main():
         print("the JSS matched {0} result(s) to the provided search value".format(size))
         
     data = CreateGroupPostData(match_results, collection, grouping, item, args.groupname)
-    new_group_id = jss.create_group(data)
+    new_group_id = jamf.create_group(data)
 
     print("the new Static Group has been created with ID: {0}\n".format(new_group_id))
     sys.exit(0)
