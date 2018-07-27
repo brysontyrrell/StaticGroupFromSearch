@@ -124,6 +124,7 @@ class JSS(object):
     def request(self, request):
         request.add_header('Authorization', 'Basic ' + self.auth)
         request.add_header('Content-Type', 'text/xml')
+        request.add_header('accept', 'text/xml')
         try:
             response = urllib2.urlopen(request)
         except ValueError as e:
